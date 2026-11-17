@@ -1,0 +1,8 @@
+-r requirements.txt
+
+pytest==8.3.4
+pytest-asyncio==0.25.0
+httpx==0.28.1
+fakeredis==2.26.2
+aiosqlite==0.20.0                 # 单元测试使用 SQLite
+ruff==0.8.4

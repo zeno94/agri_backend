@@ -1,0 +1,25 @@
+# ===== Web 框架 =====
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20          # OAuth2 表单登录解析
+
+# ===== 数据校验 / 配置 =====
+pydantic==2.10.4
+pydantic-settings==2.7.0
+
+# ===== 数据库 =====
+SQLAlchemy[asyncio]==2.0.36
+aiomysql==0.2.0                   # MySQL 8.0 异步驱动
+cryptography==44.0.0              # MySQL 8 caching_sha2_password RSA 认证
+PyMySQL==1.1.1                    # 同步脚本 / 运维工具使用
+alembic==1.14.0                   # 数据库版本迁移
+
+# ===== 缓存 =====
+redis==5.2.1
+
+# ===== 认证与安全 =====
+PyJWT==2.10.1
+bcrypt==4.2.1
+
+# 时区数据（slim 镜像缺少系统 tzdata 时使用）
+tzdata==2024.2

@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 from app.models.enums import OrderStatus
 from app.schemas.common import UTCDateTime
 
 
 class OrderItemIn(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True)
 
     part_id: int = Field(..., gt=0, description="配件 ID")
     quantity: int = Field(..., gt=0, le=1_000_000, description="数量")
@@ -20,14 +20,22 @@ class OrderItemIn(BaseModel):
         ge=0,
         max_digits=12,
         decimal_places=2,
-        description="成交单价；不传则采购单取配件采购价、销售单取销售价",
+        # 现有 Vue 前端使用 unit_price，保留 price 作为规范字段
+        validation_alias=AliasChoices("price", "unit_price"),
+        description="成交单价；兼容 unit_price。不传则采购单取采购价、销售单取销售价",
     )
 
 
 class OrderCreateBase(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True)
 
-    partner_id: int = Field(..., gt=0, description="往来单位 ID")
+    partner_id: int = Field(
+        ...,
+        gt=0,
+        # 前端分别使用 supplier_id / customer_id；规范字段为 partner_id
+        validation_alias=AliasChoices("partner_id", "supplier_id", "customer_id"),
+        description="往来单位 ID；兼容 supplier_id / customer_id",
+    )
     items: list[OrderItemIn] = Field(..., min_length=1, max_length=100, description="单据明细，至少一条")
     remark: str | None = Field(default=None, max_length=255, description="备注")
 

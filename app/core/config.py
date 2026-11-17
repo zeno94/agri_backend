@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     DB_POOL_TIMEOUT: int = Field(default=30, ge=1)
     # 本地开发便捷开关；生产环境必须置为 false，由 Alembic 管理表结构
     AUTO_CREATE_TABLES: bool = False
+    # 启动时校验数据库表/列是否与模型一致；漂移则 fail-fast
+    SCHEMA_CHECK_ON_STARTUP: bool = True
 
     # ---------- Redis ----------
     REDIS_URL: str = "redis://127.0.0.1:6379/0"

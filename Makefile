@@ -1,4 +1,4 @@
-.PHONY: help install dev up down logs migrate seed test lint
+.PHONY: help install dev up down logs migrate seed test lint schema-check repair-schema
 
 PY := .venv/bin/python
 PIP := .venv/bin/pip
@@ -13,6 +13,8 @@ help:
 	@echo "seed     - 初始化账号与示例数据"
 	@echo "test     - 运行测试"
 	@echo "lint     - Ruff 静态检查"
+	@echo "schema-check   - 检查数据库缺表/缺列（dry-run）"
+	@echo "repair-schema  - 补建缺失的表/字段/索引"
 
 install:
 	python3 -m venv .venv
@@ -42,3 +44,9 @@ test:
 
 lint:
 	.venv/bin/ruff check app tests
+
+schema-check:
+	$(PY) -m scripts.repair_schema
+
+repair-schema:
+	$(PY) -m scripts.repair_schema --apply

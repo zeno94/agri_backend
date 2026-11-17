@@ -18,9 +18,10 @@ from app.db.session import get_db
 from app.models.enums import UserRole
 from app.models.user import User
 
-# Swagger 的 Authorize 按钮会调用该地址（OAuth2 password flow）
+# Swagger 的 Authorize 按钮走 OAuth2 password flow，需要表单端点；
+# 前端业务登录使用 JSON 端点 /auth/login，不依赖此 tokenUrl。
 oauth2_scheme = OAuth2PasswordBearer(
-    tokenUrl=f"{settings.API_V1_PREFIX}/auth/login",
+    tokenUrl=f"{settings.API_V1_PREFIX}/auth/login/form",
     auto_error=False,
 )
 

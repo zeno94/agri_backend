@@ -25,6 +25,7 @@ from app.core.logging import get_logger, setup_logging
 from app.core.middleware import RequestContextMiddleware
 from app.core.redis import redis_manager
 from app.db.base import Base
+from app.db.schema import ensure_schema_up_to_date
 from app.db.session import check_database, dispose_engine, engine, wait_for_database
 
 setup_logging()
@@ -43,6 +44,10 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
             await conn.run_sync(Base.metadata.create_all)
         logger.warning("AUTO_CREATE_TABLES=true：已按模型自动建表，生产环境请改用 Alembic")
 
+    if settings.SCHEMA_CHECK_ON_STARTUP:
+        # create_all 不会给已有表补列，必须在启动阶段拦截“数据库比代码旧”
+        await ensure_schema_up_to_date()
+
     logger.info("应用启动完成，接口文档：/docs")
     yield
 
@@ -56,7 +61,8 @@ app = FastAPI(
     version=settings.APP_VERSION,
     description=(
         "FastAPI + SQLAlchemy 2.0 + MySQL 8.0 + Redis + JWT 实现的农机配件进销存后端。\n\n"
-        "**鉴权方式**：调用 `/api/v1/auth/login` 获取 JWT，点击右上角 Authorize 填入即可调试。\n\n"
+        "**鉴权方式**：前端调用 `/api/v1/auth/login`（JSON）获取 JWT；"
+        "Swagger 右上角 Authorize 使用表单端点 `/api/v1/auth/login/form`。\n\n"
         "**错误格式**：`{\"code\": \"业务错误码\", \"message\": \"提示\", \"detail\": {...}}`"
     ),
     lifespan=lifespan,

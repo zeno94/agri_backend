@@ -123,6 +123,8 @@ SAMPLE_PARTS: list[dict[str, Any]] = [
 async def _ensure_user(db: AsyncSession, username: str, password: str, role: UserRole) -> User:
     user = await db.scalar(select(User).where(User.username == username))
     if user is not None:
+        # 幂等初始化：绝不覆盖已有账号密码。忘记密码请使用 scripts.reset_password
+        logger.info("用户已存在，跳过创建且不重置密码：%s", username)
         return user
     user = User(username=username, password_hash=hash_password(password), role=role.value)
     db.add(user)

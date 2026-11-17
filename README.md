@@ -41,6 +41,9 @@ docker compose logs -f api
 | 老板 boss | `admin` | `Boss@123456` | 全部接口 + 经营看板 |
 | 员工 employee | `staff` | `Staff@123456` | 业务接口，无看板权限 |
 
+> 若连接的是旧数据库且 `admin` 已存在，`init_db` 出于安全考虑只跳过、不会覆盖密码。
+> 忘记密码或登录返回 `INVALID_CREDENTIALS` 时，使用 `scripts.reset_password` 重置（见常见问题）。
+
 容器入口按顺序执行：等待 MySQL → `alembic upgrade head` → 幂等初始化账号/示例数据 → Uvicorn 多 worker 启动。
 
 ### 方式二：本地开发（Docker 只跑基础设施）
@@ -74,6 +77,8 @@ make dev       # 热重载启动
 make migrate   # 执行迁移
 make seed      # 初始化数据
 make test      # 运行测试
+make schema-check   # 检查数据库缺表/缺列（dry-run）
+make repair-schema  # 补建缺失的表/字段/索引
 make up        # Docker Compose 全量启动
 ```
 
@@ -87,8 +92,9 @@ make up        # Docker Compose 全量启动
 
 | 模块 | 方法与路径 | 权限 | 说明 |
 | --- | --- | --- | --- |
-| 认证 | `POST /auth/login` | 公开 | OAuth2 表单登录，返回 JWT（Swagger Authorize 使用） |
-| 认证 | `POST /auth/login/json` | 公开 | JSON 登录，Vue 推荐 |
+| 认证 | `POST /auth/login` | 公开 | JSON 登录（前端推荐），body `{"username": "...", "password": "..."}` |
+| 认证 | `POST /auth/login/form` | 公开 | OAuth2 表单登录，仅供 Swagger Authorize |
+| 认证 | `POST /auth/login/json` | 公开 | 兼容旧前端的 JSON 别名（已标记 deprecated） |
 | 认证 | `GET /auth/me` | 登录 | 当前用户信息 |
 | 配件 | `GET /parts` | 登录 | 分页、名称模糊搜索、分类筛选，Redis 缓存 5 分钟 |
 | 配件 | `GET /parts/warning` | 登录 | `stock <= safe_stock` 的配件及建议补货量 |
@@ -97,6 +103,8 @@ make up        # Docker Compose 全量启动
 | 配件 | `PUT /parts/{id}` | 登录 | 修改配件；库存变化自动写盘点流水 |
 | 往来单位 | `GET /partners` | 登录 | 分页、类型筛选、名称搜索 |
 | 往来单位 | `POST /partners` | 登录 | 新增供应商/客户 |
+| 往来单位 | `GET /suppliers` | 登录 | 供应商下拉列表（前端兼容，等价 `partner_type=supplier`） |
+| 往来单位 | `GET /customers` | 登录 | 客户下拉列表（前端兼容，等价 `partner_type=customer`） |
 | 采购 | `POST /purchases/inbound` | 登录 | 采购入库（事务 + 行锁 + 库存流水） |
 | 采购 | `GET /purchases` | 登录 | 采购单分页查询 |
 | 销售 | `POST /sales/outbound` | 登录 | 销售出库（悲观锁防超卖，整单原子） |
@@ -104,6 +112,10 @@ make up        # Docker Compose 全量启动
 | 看板 | `GET /dashboard` | **仅 boss** | 今日/本月销售额、单据数、销量 Top 5 |
 | 库存 | `GET /inventory/logs` | 登录 | 库存流水分页查询（按配件/类型筛选） |
 | 系统 | `GET /health`、`GET /ready` | 公开 | 存活 / 就绪探针 |
+
+> 请求格式约定：所有业务写接口（POST/PUT）统一接收 `application/json`；唯一例外是 Swagger 专用的 `/auth/login/form`，使用 `application/x-www-form-urlencoded`。
+
+> 现有 Vue 前端兼容字段：配件列表额外接受 `page_size`（≤1000），新增配件接受 `price`；采购/销售接受 `supplier_id` / `customer_id` 与明细 `unit_price`；销售单还支持顶层 `part_id` + `quantity` 的单条格式。规范字段仍为 `size` / `sale_price` / `partner_id` / `items` / `price`。
 
 > 路由顺序细节：`/parts/warning` 必须声明在 `/parts/{part_id}` 之前，代码中已按此顺序注册。
 
@@ -119,7 +131,7 @@ agri_backend/
 │   │   ├── deps.py                 # DB/Redis 依赖、JWT 当前用户、boss 角色校验
 │   │   └── v1/
 │   │       ├── router.py           # v1 路由聚合
-│   │       └── endpoints/          # auth / parts / partners / purchases / sales / dashboard / inventory
+│   │       └── endpoints/          # auth / parts / partners / business_partners / purchases / sales / dashboard / inventory
 │   ├── core/
 │   │   ├── config.py               # pydantic-settings 配置中心
 │   │   ├── security.py             # bcrypt 密码哈希、JWT 签发与校验
@@ -132,6 +144,7 @@ agri_backend/
 │   ├── db/
 │   │   ├── base.py                 # DeclarativeBase、命名约定、UTC 时间混入
 │   │   ├── session.py              # 异步引擎、Session 工厂、健康检查
+│   │   ├── schema.py               # 启动结构预检（缺表/缺列时 fail-fast）
 │   │   └── init_db.py              # 幂等初始化账号、往来单位、示例配件
 │   ├── models/                     # 8 张表：users/partners/parts/purchase_*/sale_*/inventory_logs
 │   ├── schemas/                    # Pydantic V2 请求/响应模型
@@ -140,7 +153,9 @@ agri_backend/
 ├── migrations/                     # Alembic 异步迁移（0001_initial_schema.py）
 ├── scripts/
 │   ├── entrypoint.sh               # 容器启动脚本
-│   └── wait_for_db.py              # 等待 MySQL 就绪
+│   ├── wait_for_db.py              # 等待 MySQL 就绪
+│   ├── repair_schema.py            # 旧库补列/补索引（只增不减）
+│   └── reset_password.py           # 重置/创建账号密码（兼容旧哈希）
 ├── tests/                          # pytest：认证/配件/缓存/采购/销售/看板
 ├── Dockerfile
 ├── docker-compose.yml              # MySQL 8.0 + Redis 7 + API
@@ -175,7 +190,7 @@ HTTP → Router（参数校验 / 鉴权） → Service（事务 / 业务规则�
 - 用户不存在时也执行一次 bcrypt 校验，抹平响应时间差，防止账号枚举。
 - JWT HS256，包含 `sub / username / role / type / iat / nbf / exp / jti`，默认 12 小时。
 - 每次请求都从数据库加载用户角色（而不是信任 Token 里的 role），角色变更立即生效；`/dashboard` 通过 `get_current_boss` 做 RBAC。
-- OAuth2PasswordBearer 的 `tokenUrl` 指向 `/api/v1/auth/login`，Swagger 可直接登录调试。
+- 前端使用 JSON 登录 `/api/v1/auth/login`；Swagger 的 OAuth2PasswordBearer `tokenUrl` 指向表单端点 `/api/v1/auth/login/form`，Authorize 仍可直接调试。
 
 ### 2. 销售出库防超卖（本项目的核心）
 
@@ -316,6 +331,7 @@ erDiagram
 | `DB_ECHO` | `false` | 打印 SQL |
 | `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` | `10` / `20` | 连接池 |
 | `AUTO_CREATE_TABLES` | `false` | 仅本地开发；生产用 Alembic |
+| `SCHEMA_CHECK_ON_STARTUP` | `true` | 启动时校验表/列，结构漂移直接 fail-fast |
 | `REDIS_URL` | `redis://127.0.0.1:6379/0` | Redis DSN |
 | `CACHE_TTL_SECONDS` | `300` | 配件列表缓存 TTL |
 | `CORS_ORIGINS` | `*` | 允许来源，逗号分隔；`*` 为全部 |
@@ -333,20 +349,24 @@ CORS 说明：`allow_origins=*` 时使用 Bearer Token（非 Cookie），因此 
 
 ```bash
 TOKEN=$(curl -s -X POST http://127.0.0.1:8000/api/v1/auth/login \
-  -H 'Content-Type: application/x-www-form-urlencoded' \
-  -d 'username=admin&password=Boss@123456' \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"Boss@123456"}' \
   | python3 -c 'import sys,json; print(json.load(sys.stdin)["access_token"])')
 
 echo "$TOKEN"
 ```
 
-Vue 也可直接用 JSON：
+前端 axios / fetch 直接提交 JSON：
 
-```bash
-curl -X POST http://127.0.0.1:8000/api/v1/auth/login/json \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"Boss@123456"}'
+```js
+const { data } = await axios.post('/api/v1/auth/login', {
+  username: 'admin',
+  password: 'Boss@123456',
+})
+localStorage.setItem('token', data.access_token)
 ```
+
+> 只有 Swagger 的 Authorize 使用表单端点 `/auth/login/form`；旧路径 `/auth/login/json` 保留兼容，新代码请使用 `/auth/login`。
 
 ### 2. 配件分页 / 搜索 / 分类筛选
 
@@ -509,23 +529,69 @@ alembic check
 
 初始迁移 `migrations/versions/0001_initial_schema.py` 已包含全部表、索引、CHECK 与外键。容器启动时自动执行迁移，**生产环境请关闭 `AUTO_CREATE_TABLES`**，统一走 Alembic。
 
+### 旧数据库 / 旧数据卷修复（保留数据）
+
+如果数据库不是由当前 Alembic 迁移创建的（旧版本代码、手写 SQL、旧 Docker 数据卷），
+常见报错：
+
+```text
+sqlalchemy.exc.OperationalError: (pymysql.err.OperationalError)
+(1054, "Unknown column 'users.is_active' in 'field list'")
+```
+
+注意：`AUTO_CREATE_TABLES` / `create_all` 只会创建缺失的表，**不会给已有表补列**。
+使用只增不减的结构修复工具：
+
+```bash
+# 1. 先 dry-run，确认会补哪些列/索引
+python -m scripts.repair_schema
+
+# 2. 确认后执行；旧库没有 alembic_version 时顺带标记 head
+python -m scripts.repair_schema --apply --stamp-head
+```
+
+Docker 环境（会使用容器内的 DATABASE_URL）：
+
+```bash
+docker compose run --rm --entrypoint python api \
+  -m scripts.repair_schema --apply --stamp-head
+docker compose up -d
+```
+
+脚本只做 `ADD COLUMN / ADD INDEX / CREATE TABLE`，不删除列、不改类型；执行前请备份。
+补列规则：可空列直接加；NOT NULL 列先可空、回填历史行、再改 NOT NULL；
+`order_no` 回填为 `PO-LEGACY-<id>` / `SO-LEGACY-<id>`，库存流水按当前库存反推前后值。
+
+如果没有任何历史数据，直接重建更干净：
+
+```bash
+docker compose down -v          # 会删除 MySQL 数据卷
+docker compose up -d --build
+```
+
+否则也可手工执行 `ALTER TABLE users ADD COLUMN is_active ...`，但通常旧库还会缺
+`created_at`、`updated_at`、`order_no`、`before_stock` 等列，建议直接用修复脚本。
+
 ---
 
 ## 九、测试
 
 ```bash
-pytest                 # 25 个用例
+pytest                 # 36 个用例
 ruff check app tests   # 静态检查
 ```
 
 测试使用临时 SQLite + fakeredis + FastAPI 依赖覆盖，不依赖本机 MySQL/Redis，覆盖：
 
-- 登录成功/失败/JSON 登录/未带 Token/员工越权；
+- 登录契约：JSON 请求体、参数校验、Swagger 表单端点、旧 JSON 路径兼容；
+- 数据库结构预检：完整结构无漂移、缺列/缺表可被检测；
+- 登录成功/失败/未带 Token/员工越权；
 - 配件分页、模糊搜索、分类筛选、缓存命中与版本失效；
 - 新增/修改配件的库存流水、库存预警、参数校验；
 - 采购入库（库存、金额、流水、供应商校验、缺配件回滚）；
 - 销售出库（默认单价、扣减、超卖 409、多明细原子性、重复配件校验）；
-- 看板金额、单量、Top 5 排序与权限。
+- 看板金额、单量、Top 5 排序与权限；
+- 现有 Vue 前端契约：`/suppliers`、`/customers`、`page_size`、`price`、`supplier_id`/`unit_price`、销售单条 payload。
 
 此外已使用真实 MySQL（InnoDB）做过并发验证：10 个并发销售请求争抢 10 件库存，恰好成功 3 单、库存归 1，流水前后值连续一致。
 
@@ -548,6 +614,58 @@ ruff check app tests   # 静态检查
 ---
 
 ## 十一、常见问题
+
+**Q：登录或启动报 500 `Unknown column 'users.is_active' in 'field list'`？**
+
+说明你连接的数据库结构比代码旧（不是登录格式问题）。`AUTO_CREATE_TABLES` 只建表，不会给已有表补列。
+启动预检会直接提示缺失字段；按下面方式修复：
+
+```bash
+python -m scripts.repair_schema                    # 先看计划
+python -m scripts.repair_schema --apply --stamp-head
+```
+
+```bash
+# Docker 环境
+docker compose run --rm --entrypoint python api \
+  -m scripts.repair_schema --apply --stamp-head
+docker compose up -d
+```
+
+脚本会补上 `users.is_active`、时间戳、`order_no`、库存流水快照列及索引。
+没有历史数据时，直接 `docker compose down -v && docker compose up -d --build` 更干净。
+
+**Q：登录返回 `INVALID_CREDENTIALS` / 用户名或密码错误？**
+
+请求格式和数据库结构都正常，说明账号数据不匹配。常见原因：
+
+- 旧库里的 `admin` 是其他系统/其他密码哈希方案创建的；
+- `init_db` 只创建缺失账号，不会覆盖已存在账号的密码。
+
+重置密码（推荐交互式输入，避免密码进入 shell history）：
+
+```bash
+python -m scripts.reset_password --username admin --activate
+```
+
+非交互环境或账号不存在时：
+
+```bash
+# 账号已存在：重置密码并启用
+python -m scripts.reset_password --username admin --password 'Boss@123456' --activate
+
+# 账号不存在：直接创建老板账号
+python -m scripts.reset_password --username admin --password 'Boss@123456' --create --role boss
+```
+
+Docker 环境：
+
+```bash
+docker compose run --rm --entrypoint python api \
+  -m scripts.reset_password --username admin --activate
+```
+
+重置成功后使用新密码登录。登录接口对“用户不存在”和“密码错误”返回相同的提示，是防止账号枚举的安全设计，不代表用户一定存在。
 
 **Q：Docker 启动后 API 一直重启？**  
 查看 `docker compose logs api`。常见原因是 MySQL 尚未健康（等待脚本会重试 60 次）或 `.env` 中 `DATABASE_URL` 被覆盖。Compose 已强制将 API 的数据库地址指向 `mysql:3306`。

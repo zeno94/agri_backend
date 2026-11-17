@@ -29,10 +29,16 @@ async def list_parts(
     _current_user: CurrentUser,
     page: Annotated[int, Query(ge=1, le=10_000, description="页码，从 1 开始")] = 1,
     size: Annotated[int, Query(ge=1, le=100, description="每页数量，最大 100")] = 20,
+    page_size: Annotated[
+        int | None, Query(ge=1, le=1000, description="兼容前端的每页数量，存在时优先于 size")
+    ] = None,
     name: Annotated[str | None, Query(max_length=50, description="配件名称模糊搜索")] = None,
     category: Annotated[str | None, Query(max_length=50, description="配件分类精确筛选")] = None,
 ) -> Page[PartOut]:
-    return await part_service.list_parts(db, cache, page=page, size=size, name=name, category=category)
+    effective_size = page_size or size
+    return await part_service.list_parts(
+        db, cache, page=page, size=effective_size, name=name, category=category
+    )
 
 
 # 注意：静态路径必须声明在 /{part_id} 之前，否则会被动态路由吞掉

@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.user import UserOut
 
 
 class LoginRequest(BaseModel):
-    """JSON 登录参数（表单登录由 OAuth2PasswordRequestForm 解析）。"""
+    """JSON 登录参数：POST /api/v1/auth/login 的请求体。
+
+    表单登录（Swagger Authorize）使用独立端点 /api/v1/auth/login/form，
+    由 OAuth2PasswordRequestForm 解析，不经过本模型。
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"username": "admin", "password": "Boss@123456"}}
+    )
 
     username: str = Field(..., min_length=1, max_length=50, description="登录账号")
     password: str = Field(..., min_length=1, max_length=128, description="登录密码")

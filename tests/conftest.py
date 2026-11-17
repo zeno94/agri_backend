@@ -129,7 +129,11 @@ async def client(session_factory, fake_redis):
 
 
 async def _login(client: AsyncClient, username: str, password: str) -> dict[str, str]:
-    response = await client.post("/api/v1/auth/login", data={"username": username, "password": password})
+    # 前端统一使用 JSON 登录
+    response = await client.post(
+        "/api/v1/auth/login",
+        json={"username": username, "password": password},
+    )
     assert response.status_code == 200, response.text
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
 

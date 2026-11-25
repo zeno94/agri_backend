@@ -341,6 +341,8 @@ def main() -> int:
     dsn = load_dsn()
     conn = pymysql.connect(**dsn)
     cur = conn.cursor()
+    # timestamp 列会按会话时区换算：这里固定 UTC，避免本地 +08:00 会话把值再偏一次
+    cur.execute("SET time_zone = '+00:00'")
     cur.execute("select count(*) from parts where category in ('潜水泵','井架/吊具','灌溉配件')")
     if cur.fetchone()[0]:
         print("库里已经有灌溉品类，先回滚/重导快照再跑，避免重复追加", file=sys.stderr)

@@ -1,0 +1,133 @@
+# 生产编排：镜像由 GitHub Actions 构建并推送到 GHCR，服务器只 pull 不 build
+#
+# 服务器布局：
+#   /opt/agri/agri_backend/deploy/docker-compose.prod.yml
+#   /opt/agri/agri_backend/deploy/.env
+#
+# 常用命令：
+#   docker compose -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.prod.yml up -d
+#   docker compose -f docker-compose.prod.yml ps
+#
+# 说明：
+#   - 不发布任何公网端口，Nginx Proxy Manager 通过 npm_default 网络直达 web
+#   - MySQL 按 1C/1G 机器调参，常驻内存压到 300MB 以内
+#   - Redis 仅作缓存，关闭持久化，48MB 上限
+name: agri-erp
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: agri-erp-mysql
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请在 deploy/.env 中设置}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-agri_erp}
+      MYSQL_USER: ${MYSQL_USER:-erp}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请在 deploy/.env 中设置}
+      TZ: UTC
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-time-zone=+00:00
+      # ---- 1G 小机器专用调参 ----
+      - --innodb-buffer-pool-size=64M
+      - --innodb-log-buffer-size=8M
+      - --performance-schema=OFF
+      - --max-connections=30
+      - --table-open-cache=64
+      - --skip-name-resolve
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  redis:
+    image: redis:7-alpine
+    container_name: agri-erp-redis
+    restart: unless-stopped
+    logging: *default-logging
+    command:
+      - redis-server
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - 48mb
+      - --maxmemory-policy
+      - volatile-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 3s
+      retries: 10
+
+  api:
+    image: ghcr.io/zeno94/agri_backend:latest
+    container_name: agri-erp-api
+    restart: unless-stopped
+    logging: *default-logging
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: mysql+aiomysql://${MYSQL_USER:-erp}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-agri_erp}?charset=utf8mb4
+      REDIS_URL: redis://redis:6379/0
+      AUTO_CREATE_TABLES: "false"
+      WAIT_FOR_DB: "true"
+      # 1 核机器只挂 1 个 worker（2 个要多占 ~80MB）
+      WEB_CONCURRENCY: "1"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  web:
+    image: ghcr.io/zeno94/agri_frontend:latest
+    container_name: agri-erp-web
+    restart: unless-stopped
+    logging: *default-logging
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - default
+      - npm
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+networks:
+  # 复用已有的 Nginx Proxy Manager 网络，由 NPM 负责 80/443 与证书
+  npm:
+    external: true
+    name: npm_default
+
+volumes:
+  mysql_data:
+    name: agri-erp-mysql-data

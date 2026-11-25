@@ -42,7 +42,10 @@ http_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "${PUBLIC_URL}/
 [ "$http_code" = "200" ] || fail "health=${http_code}"
 
 # 2) 依赖健康：直接问 api 容器，绕过外网噪声
-ready=$(docker exec "$API_CONTAINER" wget -qO- --timeout=5 http://127.0.0.1:8000/ready 2>/dev/null || echo '')
+#    注意：api 镜像是 python:3.12-slim，没有 wget/curl，只能用里面自带的 python 探活。
+ready=$(docker exec "$API_CONTAINER" python -c \
+  "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=5).read().decode())" \
+  2>/dev/null || echo '')
 case "$ready" in
   *'"database":true'*) : ;;
   *) fail "database=down" ;;

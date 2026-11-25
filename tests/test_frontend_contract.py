@@ -1,7 +1,7 @@
 """现有 Vue 前端的接口契约测试。
 
 对照 agri_frontend/src/api 与页面实际请求，确保：
-- /suppliers、/customers 兼容入口存在；
+- /suppliers/options、/customers/options 下拉入口存在；
 - 配件列表支持 page_size=1000；
 - 新增配件支持 price（映射 sale_price）；
 - 采购单支持 supplier_id + unit_price；
@@ -14,19 +14,17 @@ from decimal import Decimal
 
 
 async def test_suppliers_and_customers_option_lists(client, seed_data, boss_headers):
-    suppliers = await client.get("/api/v1/suppliers", headers=boss_headers)
+    suppliers = await client.get("/api/v1/suppliers/options", headers=boss_headers)
     assert suppliers.status_code == 200, suppliers.text
     supplier_body = suppliers.json()
     assert supplier_body["total"] == 1
-    assert supplier_body["items"][0]["name"] == "潍坊配件厂"
-    assert all(item["type"] == "supplier" for item in supplier_body["items"])
+    assert supplier_body["items"][0]["name"] == "杞县丰农农机配件有限公司"
 
-    customers = await client.get("/api/v1/customers", headers=boss_headers)
+    customers = await client.get("/api/v1/customers/options", headers=boss_headers)
     assert customers.status_code == 200, customers.text
     customer_body = customers.json()
     assert customer_body["total"] == 1
-    assert customer_body["items"][0]["name"] == "绿野合作社"
-    assert all(item["type"] == "customer" for item in customer_body["items"])
+    assert customer_body["items"][0]["name"] == "王建军"
 
 
 async def test_parts_list_accepts_frontend_page_size(client, seed_data, boss_headers):
@@ -76,7 +74,7 @@ async def test_purchase_inbound_accepts_supplier_id_and_unit_price(client, seed_
 
     assert response.status_code == 201, response.text
     body = response.json()
-    assert body["partner_id"] == seed_data["supplier_id"]
+    assert body["supplier_id"] == seed_data["supplier_id"]
     assert Decimal(body["total_amount"]) == Decimal("26.00")
     assert Decimal(body["items"][0]["price"]) == Decimal("13.00")
 
@@ -97,7 +95,7 @@ async def test_sale_outbound_accepts_single_item_frontend_payload(client, seed_d
 
     assert response.status_code == 201, response.text
     body = response.json()
-    assert body["partner_id"] == seed_data["customer_id"]
+    assert body["customer_id"] == seed_data["customer_id"]
     assert Decimal(body["total_amount"]) == Decimal("75.00")
     assert Decimal(body["items"][0]["price"]) == Decimal("25.00")
     assert body["items"][0]["quantity"] == 3

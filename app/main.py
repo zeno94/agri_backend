@@ -63,7 +63,7 @@ app = FastAPI(
         "FastAPI + SQLAlchemy 2.0 + MySQL 8.0 + Redis + JWT 实现的农机配件进销存后端。\n\n"
         "**鉴权方式**：前端调用 `/api/v1/auth/login`（JSON）获取 JWT；"
         "Swagger 右上角 Authorize 使用表单端点 `/api/v1/auth/login/form`。\n\n"
-        "**错误格式**：`{\"code\": \"业务错误码\", \"message\": \"提示\", \"detail\": {...}}`"
+        '**错误格式**：`{"code": "业务错误码", "message": "提示", "detail": {...}}`'
     ),
     lifespan=lifespan,
     docs_url="/docs",

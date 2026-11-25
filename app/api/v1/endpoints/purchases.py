@@ -4,14 +4,16 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 
-from app.api.deps import CacheClient, CurrentUser, DbSession
+from app.api.deps import CacheClient, CurrentUser, DbSession, require_module
+from app.core.exceptions import AppError
 from app.schemas.common import Page
 from app.schemas.purchase import PurchaseOrderCreate, PurchaseOrderOut
+from app.services import audit as audit_service
 from app.services import purchase as purchase_service
 
-router = APIRouter(prefix="/purchases", tags=["采购入库"])
+router = APIRouter(prefix="/purchases", tags=["采购入库"], dependencies=[Depends(require_module("purchase"))])
 
 
 @router.post(
@@ -26,11 +28,49 @@ router = APIRouter(prefix="/purchases", tags=["采购入库"])
 )
 async def create_inbound(
     payload: PurchaseOrderCreate,
+    request: Request,
     db: DbSession,
     cache: CacheClient,
     current_user: CurrentUser,
 ) -> PurchaseOrderOut:
-    return await purchase_service.create_inbound(db, cache, payload, current_user)
+    try:
+        result = await purchase_service.create_inbound(db, cache, payload, current_user)
+    except AppError as exc:
+        # service 层异常时会 rollback，ORM 对象被 expire；先 refresh 再取快照
+        await db.refresh(current_user)
+        await audit_service.record(
+            db,
+            user=current_user,
+            action="purchase.inbound",
+            module="purchases",
+            status_code=exc.status_code,
+            success=False,
+            error_code=exc.code,
+            method="POST",
+            path=request.url.path,
+            detail={"request": payload.model_dump(), "message": exc.message},
+            request=request,
+        )
+        raise
+
+    await audit_service.record(
+        db,
+        user=current_user,
+        action="purchase.inbound",
+        module="purchases",
+        resource_type="purchase_order",
+        resource_id=result.id,
+        method="POST",
+        path=request.url.path,
+        detail={
+            "order_no": result.order_no,
+            "supplier_id": result.supplier_id,
+            "total_amount": result.total_amount,
+            "item_count": len(result.items),
+        },
+        request=request,
+    )
+    return result
 
 
 @router.get("", response_model=Page[PurchaseOrderOut], summary="采购单分页查询")

@@ -3,7 +3,7 @@
 用法：
     python -m app.db.init_db
 
-创建：老板账号、员工账号、示例往来单位、示例配件（含期初库存流水）。
+创建：管理员、员工、默认功能模块、示例供应商/客户、示例配件（含期初库存流水）。
 不会创建示例订单，订单请通过接口产生，以保证库存与流水始终一致。
 """
 
@@ -13,27 +13,83 @@ import asyncio
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.logging import get_logger, setup_logging
 from app.core.security import hash_password
 from app.db.base import Base
+from app.db.module_defaults import DEFAULT_EMPLOYEE_MODULES, DEFAULT_MODULES
 from app.db.session import SessionLocal, dispose_engine, engine
-from app.models.enums import ChangeType, PartnerType, UserRole
+from app.models.customer import Customer
+from app.models.enums import ChangeType, UserRole
 from app.models.inventory_log import InventoryLog
+from app.models.module import Module, UserModule
 from app.models.part import Part
-from app.models.partner import Partner
+from app.models.supplier import Supplier
 from app.models.user import User
 
 logger = get_logger(__name__)
 
-SAMPLE_PARTNERS: list[dict[str, Any]] = [
-    {"name": "山东潍坊农机配件有限公司", "type": PartnerType.SUPPLIER.value, "phone": "0536-8888666"},
-    {"name": "江苏常州发动机配件厂", "type": PartnerType.SUPPLIER.value, "phone": "0519-6666888"},
-    {"name": "绿野农机专业合作社", "type": PartnerType.CUSTOMER.value, "phone": "13800001111"},
-    {"name": "丰收家庭农场", "type": PartnerType.CUSTOMER.value, "phone": "13900002222"},
+SAMPLE_SUPPLIERS: list[dict[str, Any]] = [
+    {
+        "name": "杞县鑫源农机销售有限公司",
+        "phone": "19903780101",
+        "address": "杞县县城建设路",
+        "contact_person": "张经理",
+        "main_categories": ["整机", "农机具"],
+        "delivery_days": 1,
+        "payment_terms": "月结",
+    },
+    {
+        "name": "杞县丰农农机配件有限公司",
+        "phone": "19903780102",
+        "address": "杞县县城北环路",
+        "contact_person": "李经理",
+        "main_categories": ["传动带", "轴承", "紧固件"],
+        "delivery_days": 1,
+        "payment_terms": "现结",
+    },
+]
+
+SAMPLE_CUSTOMERS: list[dict[str, Any]] = [
+    {
+        "name": "王建军",
+        "phone": "13803780001",
+        "city": "开封市",
+        "county": "杞县",
+        "town": "邢口镇",
+        "village": "冷屯村",
+        "customer_type": "其他",
+        "acreage": Decimal("0.0"),
+        "main_crops": ["其他"],
+        "tags": ["核心客户"],
+    },
+    {
+        "name": "李国营",
+        "phone": "13903780002",
+        "city": "开封市",
+        "county": "杞县",
+        "town": "邢口镇",
+        "village": "杨屯村",
+        "customer_type": "其他",
+        "acreage": Decimal("0.0"),
+        "main_crops": ["其他"],
+        "tags": ["核心客户"],
+    },
+    {
+        "name": "王先生",
+        "phone": "13703780003",
+        "city": "开封市",
+        "county": "杞县",
+        "town": "邢口镇",
+        "village": "冷屯村",
+        "customer_type": "其他",
+        "acreage": Decimal("0.0"),
+        "main_crops": ["其他"],
+        "tags": ["其他"],
+    },
 ]
 
 SAMPLE_PARTS: list[dict[str, Any]] = [
@@ -123,7 +179,6 @@ SAMPLE_PARTS: list[dict[str, Any]] = [
 async def _ensure_user(db: AsyncSession, username: str, password: str, role: UserRole) -> User:
     user = await db.scalar(select(User).where(User.username == username))
     if user is not None:
-        # 幂等初始化：绝不覆盖已有账号密码。忘记密码请使用 scripts.reset_password
         logger.info("用户已存在，跳过创建且不重置密码：%s", username)
         return user
     user = User(username=username, password_hash=hash_password(password), role=role.value)
@@ -133,13 +188,39 @@ async def _ensure_user(db: AsyncSession, username: str, password: str, role: Use
     return user
 
 
-async def _ensure_partner(db: AsyncSession, data: dict[str, Any]) -> None:
-    exists = await db.scalar(
-        select(Partner.id).where(Partner.name == data["name"], Partner.type == data["type"])
-    )
+async def _ensure_module(db: AsyncSession, data: dict[str, Any]) -> Module:
+    module = await db.scalar(select(Module).where(Module.code == data["code"]))
+    if module is not None:
+        return module
+    module = Module(**data)
+    db.add(module)
+    await db.flush()
+    logger.info("创建功能模块：%s", data["code"])
+    return module
+
+
+async def _assign_default_modules(db: AsyncSession, user: User) -> None:
+    if user.role != UserRole.EMPLOYEE.value:
+        return
+    modules = (await db.scalars(select(Module).where(Module.code.in_(DEFAULT_EMPLOYEE_MODULES)))).all()
+    existing = set((await db.scalars(select(UserModule.module_id).where(UserModule.user_id == user.id))).all())
+    for module in modules:
+        if module.id not in existing:
+            db.add(UserModule(user_id=user.id, module_id=module.id))
+
+
+async def _ensure_supplier(db: AsyncSession, data: dict[str, Any]) -> None:
+    exists = await db.scalar(select(Supplier.id).where(Supplier.name == data["name"]))
     if exists is None:
-        db.add(Partner(**data))
-        logger.info("创建往来单位：%s", data["name"])
+        db.add(Supplier(**data))
+        logger.info("创建供应商：%s", data["name"])
+
+
+async def _ensure_customer(db: AsyncSession, data: dict[str, Any]) -> None:
+    exists = await db.scalar(select(Customer.id).where(Customer.name == data["name"]))
+    if exists is None:
+        db.add(Customer(**data))
+        logger.info("创建客户：%s", data["name"])
 
 
 async def _ensure_part(db: AsyncSession, data: dict[str, Any], operator: User) -> None:
@@ -178,13 +259,24 @@ async def seed() -> None:
 
     async with SessionLocal() as db:
         boss = await _ensure_user(db, settings.SEED_BOSS_USERNAME, settings.SEED_BOSS_PASSWORD, UserRole.BOSS)
-        await _ensure_user(db, settings.SEED_EMPLOYEE_USERNAME, settings.SEED_EMPLOYEE_PASSWORD, UserRole.EMPLOYEE)
+        employee = await _ensure_user(
+            db, settings.SEED_EMPLOYEE_USERNAME, settings.SEED_EMPLOYEE_PASSWORD, UserRole.EMPLOYEE
+        )
 
-        for partner_data in SAMPLE_PARTNERS:
-            await _ensure_partner(db, partner_data)
+        for module_data in DEFAULT_MODULES:
+            await _ensure_module(db, dict(module_data))
+        await _assign_default_modules(db, employee)
 
-        for part_data in SAMPLE_PARTS:
-            await _ensure_part(db, dict(part_data), boss)
+        # 演示主数据只在空库初始化；已有 23 个供应商/1,000 个客户/126 个配件时不再追加。
+        if (await db.scalar(select(func.count(Supplier.id)))) == 0:
+            for supplier_data in SAMPLE_SUPPLIERS:
+                await _ensure_supplier(db, supplier_data)
+        if (await db.scalar(select(func.count(Customer.id)))) == 0:
+            for customer_data in SAMPLE_CUSTOMERS:
+                await _ensure_customer(db, customer_data)
+        if (await db.scalar(select(func.count(Part.id)))) == 0:
+            for part_data in SAMPLE_PARTS:
+                await _ensure_part(db, dict(part_data), boss)
 
         await db.commit()
 

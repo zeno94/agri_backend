@@ -9,13 +9,16 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.security import OAuth2PasswordRequestForm
 
 from app.api.deps import CurrentUser, DbSession
 from app.schemas.auth import LoginRequest, TokenOut
+from app.schemas.common import Message
 from app.schemas.user import UserOut
+from app.services import audit as audit_service
 from app.services import auth as auth_service
+from app.services import user as user_service
 
 router = APIRouter(prefix="/auth", tags=["认证"])
 
@@ -26,13 +29,13 @@ router = APIRouter(prefix="/auth", tags=["认证"])
     summary="登录（JSON）",
     description="前端推荐方式：请求体为 application/json，包含 username 与 password，返回 JWT。",
 )
-async def login(payload: LoginRequest, db: DbSession) -> TokenOut:
+async def login(payload: LoginRequest, request: Request, db: DbSession) -> TokenOut:
     """JSON 登录。
 
     FastAPI 会根据 LoginRequest 的字段生成 JSON Schema；缺少 username/password 时
     返回统一的 422 VALIDATION_ERROR，而不是 401 或 500。
     """
-    return await auth_service.login(db, payload.username, payload.password)
+    return await auth_service.login(db, payload.username, payload.password, request)
 
 
 @router.post(
@@ -46,9 +49,10 @@ async def login(payload: LoginRequest, db: DbSession) -> TokenOut:
 )
 async def login_form(
     form: Annotated[OAuth2PasswordRequestForm, Depends()],
+    request: Request,
     db: DbSession,
 ) -> TokenOut:
-    return await auth_service.login(db, form.username, form.password)
+    return await auth_service.login(db, form.username, form.password, request)
 
 
 @router.post(
@@ -58,10 +62,30 @@ async def login_form(
     description="兼容旧版前端路径，新前端请直接使用 POST /api/v1/auth/login。",
     deprecated=True,
 )
-async def login_json(payload: LoginRequest, db: DbSession) -> TokenOut:
-    return await auth_service.login(db, payload.username, payload.password)
+async def login_json(payload: LoginRequest, request: Request, db: DbSession) -> TokenOut:
+    return await auth_service.login(db, payload.username, payload.password, request)
+
+
+@router.post(
+    "/logout",
+    response_model=Message,
+    summary="退出登录（审计记录）",
+    description="记录退出审计；JWT 无状态，已签发 Token 在过期前仍然有效。",
+)
+async def logout(request: Request, db: DbSession, current_user: CurrentUser) -> Message:
+    await audit_service.record(
+        db,
+        user=current_user,
+        action="auth.logout",
+        module="auth",
+        method="POST",
+        path=request.url.path,
+        request=request,
+        commit=True,
+    )
+    return Message(message="已退出登录")
 
 
 @router.get("/me", response_model=UserOut, summary="当前登录用户信息")
-async def read_current_user(current_user: CurrentUser) -> UserOut:
-    return UserOut.model_validate(current_user)
+async def read_current_user(db: DbSession, current_user: CurrentUser) -> UserOut:
+    return await user_service.get_profile(db, current_user)

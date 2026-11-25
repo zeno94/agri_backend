@@ -29,10 +29,11 @@ from sqlalchemy.pool import NullPool  # noqa: E402
 from app.core.redis import get_redis  # noqa: E402
 from app.core.security import hash_password  # noqa: E402
 from app.db.base import Base  # noqa: E402
+from app.db.module_defaults import DEFAULT_MODULES  # noqa: E402
 from app.db.session import get_db  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import Part, Partner, User  # noqa: E402
-from app.models.enums import PartnerType, UserRole  # noqa: E402
+from app.models import Customer, Module, Part, Supplier, User, UserModule  # noqa: E402
+from app.models.enums import UserRole  # noqa: E402
 
 
 @pytest_asyncio.fixture
@@ -65,11 +66,26 @@ async def seed_data(session_factory):
     """基础主数据：老板、员工、供应商、客户、正常配件、低库存配件。"""
     async with session_factory() as session:
         boss = User(username="boss", password_hash=hash_password("Boss@123456"), role=UserRole.BOSS.value)
-        employee = User(
-            username="staff", password_hash=hash_password("Staff@123456"), role=UserRole.EMPLOYEE.value
+        employee = User(username="staff", password_hash=hash_password("Staff@123456"), role=UserRole.EMPLOYEE.value)
+        supplier = Supplier(
+            name="杞县丰农农机配件有限公司",
+            phone="19903780102",
+            address="杞县县城北环路",
+            contact_person="李经理",
+            main_categories=["传动带", "轴承"],
+            delivery_days=1,
         )
-        supplier = Partner(name="潍坊配件厂", type=PartnerType.SUPPLIER.value, phone="0536-1234567")
-        customer = Partner(name="绿野合作社", type=PartnerType.CUSTOMER.value, phone="13800001111")
+        customer = Customer(
+            name="王建军",
+            phone="13803780001",
+            city="开封市",
+            county="杞县",
+            town="邢口镇",
+            village="冷屯村",
+            customer_type="种粮户",
+            main_crops=["小麦", "玉米"],
+            tags=["核心客户"],
+        )
         part = Part(
             name="柴油滤清器",
             model="4L88",
@@ -91,6 +107,21 @@ async def seed_data(session_factory):
             sale_price=Decimal("68.00"),
         )
         session.add_all([boss, employee, supplier, customer, part, low_part])
+        await session.flush()
+
+        modules = []
+        for data in DEFAULT_MODULES:
+            module = Module(**data)
+            session.add(module)
+            modules.append(module)
+        await session.flush()
+
+        # 测试员工默认拥有全部非管理员模块，便于覆盖原有业务测试；
+        # 模块隔离测试会单独创建/调整用户授权。
+        for module in modules:
+            if not module.is_admin_only:
+                session.add(UserModule(user_id=employee.id, module_id=module.id))
+
         await session.commit()
         for obj in (boss, employee, supplier, customer, part, low_part):
             await session.refresh(obj)
@@ -102,6 +133,7 @@ async def seed_data(session_factory):
             "customer_id": customer.id,
             "part_id": part.id,
             "low_part_id": low_part.id,
+            "module_ids": {m.code: m.id for m in modules},
         }
 
 

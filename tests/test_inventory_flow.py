@@ -34,7 +34,7 @@ async def test_purchase_inbound_increases_stock_and_writes_log(client, seed_data
     response = await client.post(
         "/api/v1/purchases/inbound",
         json={
-            "partner_id": seed_data["supplier_id"],
+            "supplier_id": seed_data["supplier_id"],
             "items": [{"part_id": seed_data["part_id"], "quantity": 5, "price": "13.00"}],
             "remark": "月度补货",
         },
@@ -44,7 +44,7 @@ async def test_purchase_inbound_increases_stock_and_writes_log(client, seed_data
     assert response.status_code == 201, response.text
     order = response.json()
     assert order["status"] == "completed"
-    assert order["partner_name"] == "潍坊配件厂"
+    assert order["supplier_name"] == "杞县丰农农机配件有限公司"
     assert order["operator_name"] == "boss"
     assert order["items"][0]["part_name"] == "柴油滤清器"
     assert Decimal(order["items"][0]["amount"]) == Decimal("65.00")
@@ -71,25 +71,25 @@ async def test_purchase_inbound_increases_stock_and_writes_log(client, seed_data
     assert order_list.json()["total"] == 1
 
 
-async def test_purchase_requires_supplier_partner(client, seed_data, boss_headers):
+async def test_purchase_rejects_missing_supplier(client, seed_data, boss_headers):
     response = await client.post(
         "/api/v1/purchases/inbound",
         json={
-            "partner_id": seed_data["customer_id"],
+            "supplier_id": 999999,
             "items": [{"part_id": seed_data["part_id"], "quantity": 1}],
         },
         headers=boss_headers,
     )
 
-    assert response.status_code == 400
-    assert response.json()["code"] == "PARTNER_TYPE_INVALID"
+    assert response.status_code == 404
+    assert response.json()["code"] == "SUPPLIER_NOT_FOUND"
 
 
 async def test_purchase_with_missing_part_rolls_back(client, seed_data, boss_headers):
     response = await client.post(
         "/api/v1/purchases/inbound",
         json={
-            "partner_id": seed_data["supplier_id"],
+            "supplier_id": seed_data["supplier_id"],
             "items": [
                 {"part_id": seed_data["part_id"], "quantity": 2},
                 {"part_id": 999999, "quantity": 1},
@@ -111,7 +111,7 @@ async def test_sale_outbound_deducts_stock_and_writes_log(client, seed_data, bos
     response = await client.post(
         "/api/v1/sales/outbound",
         json={
-            "partner_id": seed_data["customer_id"],
+            "customer_id": seed_data["customer_id"],
             "items": [{"part_id": seed_data["part_id"], "quantity": 4}],
         },
         headers=boss_headers,
@@ -120,7 +120,7 @@ async def test_sale_outbound_deducts_stock_and_writes_log(client, seed_data, bos
     assert response.status_code == 201, response.text
     order = response.json()
     assert order["status"] == "completed"
-    assert order["partner_name"] == "绿野合作社"
+    assert order["customer_name"] == "王建军"
     assert order["items"][0]["price"] == "25.00"  # 未传单价时取配件销售价
     assert Decimal(order["total_amount"]) == Decimal("100.00")
 
@@ -142,7 +142,7 @@ async def test_sale_outbound_rejects_oversell_and_rolls_back(client, seed_data, 
     response = await client.post(
         "/api/v1/sales/outbound",
         json={
-            "partner_id": seed_data["customer_id"],
+            "customer_id": seed_data["customer_id"],
             "items": [{"part_id": seed_data["part_id"], "quantity": 11}],
         },
         headers=boss_headers,
@@ -177,7 +177,7 @@ async def test_multi_item_sale_is_atomic_when_one_item_is_short(client, seed_dat
     response = await client.post(
         "/api/v1/sales/outbound",
         json={
-            "partner_id": seed_data["customer_id"],
+            "customer_id": seed_data["customer_id"],
             "items": [
                 {"part_id": seed_data["part_id"], "quantity": 2},
                 {"part_id": other_part_id, "quantity": 5},
@@ -209,7 +209,7 @@ async def test_sale_rejects_duplicate_parts(client, seed_data, boss_headers):
     response = await client.post(
         "/api/v1/sales/outbound",
         json={
-            "partner_id": seed_data["customer_id"],
+            "customer_id": seed_data["customer_id"],
             "items": [
                 {"part_id": seed_data["part_id"], "quantity": 1},
                 {"part_id": seed_data["part_id"], "quantity": 2},
@@ -222,25 +222,25 @@ async def test_sale_rejects_duplicate_parts(client, seed_data, boss_headers):
     assert response.json()["code"] == "VALIDATION_ERROR"
 
 
-async def test_sale_requires_customer_partner(client, seed_data, boss_headers):
+async def test_sale_rejects_missing_customer(client, seed_data, boss_headers):
     response = await client.post(
         "/api/v1/sales/outbound",
         json={
-            "partner_id": seed_data["supplier_id"],
+            "customer_id": 999999,
             "items": [{"part_id": seed_data["part_id"], "quantity": 1}],
         },
         headers=boss_headers,
     )
 
-    assert response.status_code == 400
-    assert response.json()["code"] == "PARTNER_TYPE_INVALID"
+    assert response.status_code == 404
+    assert response.json()["code"] == "CUSTOMER_NOT_FOUND"
 
 
 async def test_sale_with_fixed_price_and_multiple_items(client, seed_data, boss_headers):
     response = await client.post(
         "/api/v1/sales/outbound",
         json={
-            "partner_id": seed_data["customer_id"],
+            "customer_id": seed_data["customer_id"],
             "items": [
                 {"part_id": seed_data["part_id"], "quantity": 2, "price": "24.50"},
                 {"part_id": seed_data["low_part_id"], "quantity": 2, "price": "66.00"},
@@ -255,3 +255,27 @@ async def test_sale_with_fixed_price_and_multiple_items(client, seed_data, boss_
     assert Decimal(order["total_amount"]) == Decimal("181.00")
     assert len(order["items"]) == 2
     assert order["remark"] == "现场结算"
+
+
+async def test_sale_outbound_supports_three_items(client, seed_data, boss_headers):
+    third_part_id = await _create_simple_part(client, boss_headers, "第三测试配件", stock=8)
+    response = await client.post(
+        "/api/v1/sales/outbound",
+        json={
+            "customer_id": seed_data["customer_id"],
+            "items": [
+                {"part_id": seed_data["part_id"], "quantity": 1},
+                {"part_id": seed_data["low_part_id"], "quantity": 2},
+                {"part_id": third_part_id, "quantity": 3},
+            ],
+            "remark": "三种配件一单出库",
+        },
+        headers=boss_headers,
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert len(body["items"]) == 3
+    assert [item["quantity"] for item in body["items"]] == [1, 2, 3]
+    assert body["customer_name"] == "王建军"
+    assert body["customer_display_name"] == "王建军（开封市杞县邢口镇冷屯村）"
+    assert Decimal(body["total_amount"]) == Decimal("25.00") + Decimal("136.00") + Decimal("60.00")

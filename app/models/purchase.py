@@ -5,7 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, Numeric, String
+from sqlalchemy import CheckConstraint, Index, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, big_int_pk
@@ -13,7 +13,7 @@ from app.models.enums import OrderStatus
 
 if TYPE_CHECKING:
     from app.models.part import Part
-    from app.models.partner import Partner
+    from app.models.supplier import Supplier
     from app.models.user import User
 
 
@@ -26,9 +26,7 @@ class PurchaseOrder(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(big_int_pk(), primary_key=True, autoincrement=True)
     order_no: Mapped[str] = mapped_column(String(32), nullable=False, unique=True, index=True)
-    partner_id: Mapped[int] = mapped_column(
-        big_int_pk(), ForeignKey("partners.id", ondelete="RESTRICT"), nullable=False, index=True
-    )
+    supplier_id: Mapped[int] = mapped_column(big_int_pk(), nullable=False, index=True)
     total_amount: Mapped[Decimal] = mapped_column(
         Numeric(14, 2), nullable=False, default=Decimal("0.00"), server_default="0.00"
     )
@@ -38,14 +36,23 @@ class PurchaseOrder(TimestampMixin, Base):
         default=OrderStatus.PENDING.value,
         server_default=OrderStatus.PENDING.value,
     )
-    operator_id: Mapped[int] = mapped_column(
-        big_int_pk(), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True
-    )
+    operator_id: Mapped[int] = mapped_column(big_int_pk(), nullable=False, index=True)
     remark: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    partner: Mapped[Partner] = relationship(lazy="joined")
-    operator: Mapped[User] = relationship(lazy="joined")
+    supplier: Mapped[Supplier] = relationship(
+        "Supplier",
+        primaryjoin="foreign(PurchaseOrder.supplier_id) == Supplier.id",
+        back_populates="purchase_orders",
+        lazy="joined",
+    )
+    operator: Mapped[User] = relationship(
+        "User",
+        primaryjoin="foreign(PurchaseOrder.operator_id) == User.id",
+        lazy="joined",
+    )
     items: Mapped[list[PurchaseItem]] = relationship(
+        "PurchaseItem",
+        primaryjoin="PurchaseOrder.id == foreign(PurchaseItem.order_id)",
         back_populates="order",
         cascade="all, delete-orphan",
         lazy="selectin",
@@ -63,12 +70,18 @@ class PurchaseItem(Base):
     )
 
     id: Mapped[int] = mapped_column(big_int_pk(), primary_key=True, autoincrement=True)
-    order_id: Mapped[int] = mapped_column(
-        big_int_pk(), ForeignKey("purchase_orders.id", ondelete="CASCADE"), nullable=False
-    )
-    part_id: Mapped[int] = mapped_column(big_int_pk(), ForeignKey("parts.id", ondelete="RESTRICT"), nullable=False)
+    order_id: Mapped[int] = mapped_column(big_int_pk(), nullable=False)
+    part_id: Mapped[int] = mapped_column(big_int_pk(), nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
 
-    order: Mapped[PurchaseOrder] = relationship(back_populates="items")
-    part: Mapped[Part] = relationship(lazy="joined")
+    order: Mapped[PurchaseOrder] = relationship(
+        "PurchaseOrder",
+        primaryjoin="foreign(PurchaseItem.order_id) == PurchaseOrder.id",
+        back_populates="items",
+    )
+    part: Mapped[Part] = relationship(
+        "Part",
+        primaryjoin="foreign(PurchaseItem.part_id) == Part.id",
+        lazy="joined",
+    )

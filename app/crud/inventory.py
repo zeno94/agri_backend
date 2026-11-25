@@ -24,10 +24,6 @@ async def list_logs(
 
     total = await db.scalar(select(func.count(InventoryLog.id)).where(*conditions)) or 0
     rows = await db.scalars(
-        select(InventoryLog)
-        .where(*conditions)
-        .order_by(InventoryLog.id.desc())
-        .offset((page - 1) * size)
-        .limit(size)
+        select(InventoryLog).where(*conditions).order_by(InventoryLog.id.desc()).offset((page - 1) * size).limit(size)
     )
     return list(rows.all()), total

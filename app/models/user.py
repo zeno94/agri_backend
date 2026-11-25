@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 from sqlalchemy import Boolean, CheckConstraint, String, text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, big_int_pk
 from app.models.enums import UserRole
+from app.models.module import Module, UserModule
 
 
 class User(TimestampMixin, Base):
     __tablename__ = "users"
-    __table_args__ = (
-        CheckConstraint("role IN ('boss', 'employee')", name="role"),
-    )
+    __table_args__ = (CheckConstraint("role IN ('boss', 'employee')", name="role"),)
 
     id: Mapped[int] = mapped_column(big_int_pk(), primary_key=True, autoincrement=True)
     username: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
@@ -30,6 +29,23 @@ class User(TimestampMixin, Base):
         nullable=False,
         default=True,
         server_default=text("1"),
+    )
+
+    module_links: Mapped[list[UserModule]] = relationship(
+        "UserModule",
+        primaryjoin="User.id == foreign(UserModule.user_id)",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    modules: Mapped[list[Module]] = relationship(
+        "Module",
+        secondary="user_modules",
+        primaryjoin="User.id == foreign(UserModule.user_id)",
+        secondaryjoin="foreign(UserModule.module_id) == Module.id",
+        viewonly=True,
+        lazy="selectin",
+        order_by="Module.sort_order",
     )
 
     def __repr__(self) -> str:  # pragma: no cover - 调试用

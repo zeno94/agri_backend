@@ -97,7 +97,8 @@ async def test_openapi_contract_for_login_and_write_endpoints(client):
         ("/api/v1/auth/login/json", "post"),
         ("/api/v1/parts", "post"),
         ("/api/v1/parts/{part_id}", "put"),
-        ("/api/v1/partners", "post"),
+        ("/api/v1/suppliers", "post"),
+        ("/api/v1/customers", "post"),
         ("/api/v1/purchases/inbound", "post"),
         ("/api/v1/sales/outbound", "post"),
     ]

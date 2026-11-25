@@ -32,11 +32,7 @@ def _find_missing_schema_parts(conn: Connection) -> list[str]:
             continue
 
         existing_columns = {column["name"] for column in inspector.get_columns(table.name)}
-        missing.extend(
-            f"{table.name}.{column.name}"
-            for column in table.columns
-            if column.name not in existing_columns
-        )
+        missing.extend(f"{table.name}.{column.name}" for column in table.columns if column.name not in existing_columns)
     return missing
 
 

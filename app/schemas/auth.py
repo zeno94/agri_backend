@@ -14,9 +14,7 @@ class LoginRequest(BaseModel):
     由 OAuth2PasswordRequestForm 解析，不经过本模型。
     """
 
-    model_config = ConfigDict(
-        json_schema_extra={"example": {"username": "admin", "password": "Boss@123456"}}
-    )
+    model_config = ConfigDict(json_schema_extra={"example": {"username": "admin", "password": "Boss@123456"}})
 
     username: str = Field(..., min_length=1, max_length=50, description="登录账号")
     password: str = Field(..., min_length=1, max_length=128, description="登录密码")

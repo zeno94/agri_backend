@@ -5,6 +5,16 @@
 - 事务边界、跨表业务规则放在 services 层。
 """
 
-from app.crud import dashboard, inventory, order, part, partner, user
+from app.crud import audit, customer, dashboard, inventory, module, order, part, supplier, user
 
-__all__ = ["dashboard", "inventory", "order", "part", "partner", "user"]
+__all__ = [
+    "audit",
+    "customer",
+    "dashboard",
+    "inventory",
+    "module",
+    "order",
+    "part",
+    "supplier",
+    "user",
+]

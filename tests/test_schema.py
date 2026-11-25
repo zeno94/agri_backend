@@ -36,3 +36,12 @@ def test_missing_columns_and_tables_are_detected():
     assert "users.is_active" in missing
     assert "users.password_hash" in missing
     assert "parts（整表）" in missing
+
+
+def test_models_do_not_declare_database_foreign_keys():
+    foreign_keys = [
+        (table.name, fk.parent.name, fk.target_fullname)
+        for table in Base.metadata.tables.values()
+        for fk in table.foreign_keys
+    ]
+    assert foreign_keys == []

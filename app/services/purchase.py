@@ -20,8 +20,8 @@ from app.core.exceptions import AppError
 from app.core.money import generate_order_no, money
 from app.crud import order as crud_order
 from app.crud import part as crud_part
-from app.crud import partner as crud_partner
-from app.models.enums import ChangeType, OrderStatus, PartnerType
+from app.crud import supplier as crud_supplier
+from app.models.enums import ChangeType, OrderStatus
 from app.models.inventory_log import InventoryLog
 from app.models.purchase import PurchaseItem, PurchaseOrder
 from app.models.user import User
@@ -35,8 +35,8 @@ def _to_out(order: PurchaseOrder) -> PurchaseOrderOut:
     return PurchaseOrderOut(
         id=order.id,
         order_no=order.order_no,
-        partner_id=order.partner_id,
-        partner_name=order.partner.name if order.partner is not None else "",
+        supplier_id=order.supplier_id,
+        supplier_name=order.supplier.name if order.supplier is not None else "",
         total_amount=money(order.total_amount),
         status=OrderStatus(order.status),
         operator_id=order.operator_id,
@@ -62,11 +62,9 @@ async def create_inbound(
     payload: PurchaseOrderCreate,
     operator: User,
 ) -> PurchaseOrderOut:
-    partner = await crud_partner.get_by_id(db, payload.partner_id)
-    if partner is None:
-        raise AppError("PARTNER_NOT_FOUND", "往来单位不存在", 404)
-    if partner.type != PartnerType.SUPPLIER.value:
-        raise AppError("PARTNER_TYPE_INVALID", "采购入库的往来单位必须是供应商", 400)
+    supplier = await crud_supplier.get_by_id(db, payload.supplier_id)
+    if supplier is None or not supplier.is_active:
+        raise AppError("SUPPLIER_NOT_FOUND", "供应商不存在或已停用", 404)
 
     order_id: int | None = None
     try:
@@ -78,7 +76,7 @@ async def create_inbound(
 
         order = PurchaseOrder(
             order_no=generate_order_no("PO"),
-            partner_id=partner.id,
+            supplier_id=supplier.id,
             operator_id=operator.id,
             total_amount=Decimal("0.00"),
             status=OrderStatus.COMPLETED.value,

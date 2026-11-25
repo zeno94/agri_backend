@@ -47,9 +47,7 @@ async def list_parts(
 async def list_warning_parts(db: AsyncSession) -> list[Part]:
     """库存小于等于安全库存的配件，缺货最严重的排在最前。"""
     stmt = (
-        select(Part)
-        .where(Part.stock <= Part.safe_stock)
-        .order_by((Part.stock - Part.safe_stock).asc(), Part.id.asc())
+        select(Part).where(Part.stock <= Part.safe_stock).order_by((Part.stock - Part.safe_stock).asc(), Part.id.asc())
     )
     rows = await db.scalars(stmt)
     return list(rows.all())

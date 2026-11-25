@@ -102,7 +102,7 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(IntegrityError)
     async def _integrity_error_handler(request: Request, exc: IntegrityError) -> JSONResponse:
-        logger.warning("数据库唯一约束/外键冲突：%s %s", request.url.path, exc.orig)
+        logger.warning("数据库唯一约束冲突：%s %s", request.url.path, exc.orig)
         return JSONResponse(
             status_code=409,
             content=_error_body("DATA_CONFLICT", "数据唯一性冲突或关联数据不存在"),

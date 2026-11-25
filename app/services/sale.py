@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 
 from redis.asyncio import Redis
@@ -21,17 +22,18 @@ from app.core.cache import invalidate_parts_cache
 from app.core.exceptions import AppError
 from app.core.logging import get_logger
 from app.core.money import generate_order_no, money
+from app.core.time import local_day_end_exclusive, local_day_start
+from app.crud import customer as crud_customer
 from app.crud import order as crud_order
 from app.crud import part as crud_part
-from app.crud import partner as crud_partner
-from app.models.enums import ChangeType, OrderStatus, PartnerType
+from app.models.enums import ChangeType, OrderStatus, UserRole
 from app.models.inventory_log import InventoryLog
 from app.models.sale import SaleItem, SaleOrder
 from app.models.user import User
-from app.schemas.common import Page
 from app.schemas.order import OrderItemOut
-from app.schemas.sale import SaleOrderCreate, SaleOrderOut
+from app.schemas.sale import SaleOrderCreate, SaleOrderOut, SaleOrderPage
 from app.services.common import calc_pages
+from app.services.customer import customer_display_name as build_customer_display_name
 
 logger = get_logger(__name__)
 
@@ -40,8 +42,9 @@ def _to_out(order: SaleOrder) -> SaleOrderOut:
     return SaleOrderOut(
         id=order.id,
         order_no=order.order_no,
-        partner_id=order.partner_id,
-        partner_name=order.partner.name if order.partner is not None else "",
+        customer_id=order.customer_id,
+        customer_name=order.customer.name if order.customer is not None else "",
+        customer_display_name=(build_customer_display_name(order.customer) if order.customer is not None else ""),
         total_amount=money(order.total_amount),
         status=OrderStatus(order.status),
         operator_id=order.operator_id,
@@ -67,11 +70,20 @@ async def create_outbound(
     payload: SaleOrderCreate,
     operator: User,
 ) -> SaleOrderOut:
-    partner = await crud_partner.get_by_id(db, payload.partner_id)
-    if partner is None:
-        raise AppError("PARTNER_NOT_FOUND", "往来单位不存在", 404)
-    if partner.type != PartnerType.CUSTOMER.value:
-        raise AppError("PARTNER_TYPE_INVALID", "销售出库的往来单位必须是客户", 400)
+    customer = await crud_customer.get_by_id(db, payload.customer_id)
+    if customer is None or not customer.is_active:
+        raise AppError("CUSTOMER_NOT_FOUND", "客户不存在或已停用", 404)
+
+    # 成交价权限：员工按建议零售价成交，只有 boss 可以手动改价
+    if operator.role != UserRole.BOSS.value:
+        overridden = [item.part_id for item in payload.items if item.price is not None]
+        if overridden:
+            raise AppError(
+                "PRICE_OVERRIDE_FORBIDDEN",
+                "仅管理员可以调整销售成交价，员工请按建议零售价成交",
+                403,
+                detail={"part_ids": overridden},
+            )
 
     order_id: int | None = None
     try:
@@ -94,7 +106,7 @@ async def create_outbound(
             if parts[item.part_id].stock < item.quantity
         ]
         if shortages:
-            logger.warning("销售出库库存不足，整单回滚：operator=%s partner=%s", operator.id, partner.id)
+            logger.warning("销售出库库存不足，整单回滚：operator=%s customer=%s", operator.id, customer.id)
             raise AppError(
                 "INSUFFICIENT_STOCK",
                 "库存不足，销售单已回滚",
@@ -105,7 +117,7 @@ async def create_outbound(
         # 3) 校验通过后创建单据并统一扣减库存
         order = SaleOrder(
             order_no=generate_order_no("SO"),
-            partner_id=partner.id,
+            customer_id=customer.id,
             operator_id=operator.id,
             total_amount=Decimal("0.00"),
             status=OrderStatus.COMPLETED.value,
@@ -158,12 +170,33 @@ async def create_outbound(
     return _to_out(detail)
 
 
-async def list_outbound_orders(db: AsyncSession, *, page: int, size: int) -> Page[SaleOrderOut]:
-    rows, total = await crud_order.list_sale_orders(db, page=page, size=size)
-    return Page[SaleOrderOut](
+async def list_outbound_orders(
+    db: AsyncSession,
+    *,
+    page: int,
+    size: int,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    customer_id: int | None = None,
+    keyword: str | None = None,
+) -> SaleOrderPage:
+    if start_date and end_date and start_date > end_date:
+        raise AppError("INVALID_DATE_RANGE", "开始日期不能晚于结束日期", 400)
+
+    rows, total, total_amount = await crud_order.list_sale_orders(
+        db,
+        page=page,
+        size=size,
+        start=local_day_start(start_date) if start_date else None,
+        end=local_day_end_exclusive(end_date) if end_date else None,
+        customer_id=customer_id,
+        keyword=keyword,
+    )
+    return SaleOrderPage(
         items=[_to_out(order) for order in rows],
         total=total,
         page=page,
         size=size,
         pages=calc_pages(total, size),
+        total_amount=money(total_amount),
     )

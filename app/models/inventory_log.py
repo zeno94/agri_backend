@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, func
+from sqlalchemy import CheckConstraint, DateTime, Index, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, big_int_pk, utcnow
@@ -29,18 +29,22 @@ class InventoryLog(Base):
     )
 
     id: Mapped[int] = mapped_column(big_int_pk(), primary_key=True, autoincrement=True)
-    part_id: Mapped[int] = mapped_column(big_int_pk(), ForeignKey("parts.id", ondelete="RESTRICT"), nullable=False)
+    part_id: Mapped[int] = mapped_column(big_int_pk(), nullable=False)
     change_type: Mapped[str] = mapped_column(String(10), nullable=False, default=ChangeType.CHECK.value)
     change_qty: Mapped[int] = mapped_column(Integer, nullable=False, comment="带符号变动数量：入正出负")
     before_stock: Mapped[int] = mapped_column(Integer, nullable=False, comment="变动前库存")
     after_stock: Mapped[int] = mapped_column(Integer, nullable=False, comment="变动后库存")
-    operator_id: Mapped[int] = mapped_column(
-        big_int_pk(), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True
-    )
+    operator_id: Mapped[int] = mapped_column(big_int_pk(), nullable=False, index=True)
     remark: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utcnow, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow, server_default=func.now())
 
-    part: Mapped[Part] = relationship(lazy="joined")
-    operator: Mapped[User] = relationship(lazy="joined")
+    part: Mapped[Part] = relationship(
+        "Part",
+        primaryjoin="foreign(InventoryLog.part_id) == Part.id",
+        lazy="joined",
+    )
+    operator: Mapped[User] = relationship(
+        "User",
+        primaryjoin="foreign(InventoryLog.operator_id) == User.id",
+        lazy="joined",
+    )

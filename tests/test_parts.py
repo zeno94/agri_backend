@@ -44,9 +44,7 @@ async def test_parts_pagination_and_filters(client, seed_data, boss_headers):
     assert no_match.json()["pages"] == 0
 
 
-async def test_parts_list_is_cached_and_invalidated(
-    client, seed_data, boss_headers, fake_redis, session_factory
-):
+async def test_parts_list_is_cached_and_invalidated(client, seed_data, boss_headers, fake_redis, session_factory):
     params = {"page": 1, "size": 20, "name": "柴油"}
 
     first = await client.get("/api/v1/parts", params=params, headers=boss_headers)

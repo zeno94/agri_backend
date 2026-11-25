@@ -4,15 +4,15 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
-from app.api.deps import CurrentUser, DbSession
+from app.api.deps import CurrentUser, DbSession, require_module
 from app.models.enums import ChangeType
 from app.schemas.common import Page
 from app.schemas.inventory import InventoryLogOut
 from app.services import inventory as inventory_service
 
-router = APIRouter(prefix="/inventory", tags=["库存流水"])
+router = APIRouter(prefix="/inventory", tags=["库存流水"], dependencies=[Depends(require_module("warning"))])
 
 
 @router.get("/logs", response_model=Page[InventoryLogOut], summary="库存变动流水分页查询")

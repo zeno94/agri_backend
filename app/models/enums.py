@@ -16,13 +16,6 @@ class UserRole(StrEnum):
     EMPLOYEE = "employee"
 
 
-class PartnerType(StrEnum):
-    """往来单位类型：供应商 / 客户。"""
-
-    SUPPLIER = "supplier"
-    CUSTOMER = "customer"
-
-
 class OrderStatus(StrEnum):
     """单据状态。
 

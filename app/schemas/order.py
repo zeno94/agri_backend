@@ -20,7 +20,6 @@ class OrderItemIn(BaseModel):
         ge=0,
         max_digits=12,
         decimal_places=2,
-        # 现有 Vue 前端使用 unit_price，保留 price 作为规范字段
         validation_alias=AliasChoices("price", "unit_price"),
         description="成交单价；兼容 unit_price。不传则采购单取采购价、销售单取销售价",
     )
@@ -29,13 +28,6 @@ class OrderItemIn(BaseModel):
 class OrderCreateBase(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True)
 
-    partner_id: int = Field(
-        ...,
-        gt=0,
-        # 前端分别使用 supplier_id / customer_id；规范字段为 partner_id
-        validation_alias=AliasChoices("partner_id", "supplier_id", "customer_id"),
-        description="往来单位 ID；兼容 supplier_id / customer_id",
-    )
     items: list[OrderItemIn] = Field(..., min_length=1, max_length=100, description="单据明细，至少一条")
     remark: str | None = Field(default=None, max_length=255, description="备注")
 
@@ -64,8 +56,6 @@ class OrderItemOut(BaseModel):
 class OrderOutBase(BaseModel):
     id: int
     order_no: str
-    partner_id: int
-    partner_name: str
     total_amount: Decimal
     status: OrderStatus
     operator_id: int

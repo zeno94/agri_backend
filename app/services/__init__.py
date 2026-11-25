@@ -3,6 +3,30 @@
 Service 负责：事务边界、跨表业务规则、缓存失效、DTO 组装。
 """
 
-from app.services import auth, dashboard, inventory, part, partner, purchase, sale
+from app.services import (
+    audit,
+    auth,
+    customer,
+    dashboard,
+    inventory,
+    module,
+    part,
+    purchase,
+    sale,
+    supplier,
+    user,
+)
 
-__all__ = ["auth", "dashboard", "inventory", "part", "partner", "purchase", "sale"]
+__all__ = [
+    "audit",
+    "auth",
+    "customer",
+    "dashboard",
+    "inventory",
+    "module",
+    "part",
+    "purchase",
+    "sale",
+    "supplier",
+    "user",
+]

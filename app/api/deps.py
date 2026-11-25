@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import Depends
+from fastapi import Depends, Request
 from fastapi.security import OAuth2PasswordBearer
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,10 +13,12 @@ from app.core.config import settings
 from app.core.exceptions import AppError
 from app.core.redis import get_redis
 from app.core.security import AUTH_HEADERS, decode_access_token
+from app.crud import module as crud_module
 from app.crud import user as crud_user
 from app.db.session import get_db
 from app.models.enums import UserRole
 from app.models.user import User
+from app.services import audit as audit_service
 
 # Swagger 的 Authorize 按钮走 OAuth2 password flow，需要表单端点；
 # 前端业务登录使用 JSON 端点 /auth/login，不依赖此 tokenUrl。
@@ -55,11 +57,96 @@ async def get_current_user(
     return user
 
 
-async def get_current_boss(user: Annotated[User, Depends(get_current_user)]) -> User:
-    """仅老板可访问（用于看板等经营数据接口）。"""
+async def get_current_boss(
+    request: Request,
+    db: DbSession,
+    user: Annotated[User, Depends(get_current_user)],
+) -> User:
+    """仅管理员可访问（用于看板、主数据写操作）。拒绝时留下审计。"""
     if user.role != UserRole.BOSS.value:
-        raise AppError("FORBIDDEN", "仅老板可访问该接口", 403)
+        await audit_service.record(
+            db,
+            user=user,
+            action="authz.denied",
+            module="security",
+            status_code=403,
+            success=False,
+            error_code="FORBIDDEN",
+            method=request.method,
+            path=request.url.path,
+            detail={
+                "required_role": UserRole.BOSS.value,
+                "actual_role": user.role,
+                "path": request.url.path,
+            },
+            request=request,
+            commit=True,
+        )
+        raise AppError("FORBIDDEN", "仅管理员可访问该接口", 403)
     return user
+
+
+def require_any_module(codes: list[str]):
+    """返回一个校验当前用户是否拥有任一功能模块的依赖。管理员直接放行。"""
+
+    async def _checker(
+        request: Request,
+        db: DbSession,
+        user: Annotated[User, Depends(get_current_user)],
+    ) -> User:
+        if user.role == UserRole.BOSS.value:
+            return user
+        for code in codes:
+            if await crud_module.user_has_module(db, user.id, code):
+                return user
+        await audit_service.record(
+            db,
+            user=user,
+            action="authz.denied",
+            module="security",
+            status_code=403,
+            success=False,
+            error_code="MODULE_FORBIDDEN",
+            method=request.method,
+            path=request.url.path,
+            detail={"required_modules": codes, "actual_role": user.role, "path": request.url.path},
+            request=request,
+            commit=True,
+        )
+        raise AppError("FORBIDDEN", "当前账号没有该功能模块权限", 403)
+
+    return _checker
+
+
+def require_module(code: str):
+    """返回一个校验当前用户是否拥有指定功能模块的依赖。管理员直接放行。"""
+
+    async def _checker(
+        request: Request,
+        db: DbSession,
+        user: Annotated[User, Depends(get_current_user)],
+    ) -> User:
+        if user.role == UserRole.BOSS.value:
+            return user
+        if await crud_module.user_has_module(db, user.id, code):
+            return user
+        await audit_service.record(
+            db,
+            user=user,
+            action="authz.denied",
+            module="security",
+            status_code=403,
+            success=False,
+            error_code="MODULE_FORBIDDEN",
+            method=request.method,
+            path=request.url.path,
+            detail={"required_module": code, "actual_role": user.role, "path": request.url.path},
+            request=request,
+            commit=True,
+        )
+        raise AppError("FORBIDDEN", "当前账号没有该功能模块权限", 403)
+
+    return _checker
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]

@@ -15,10 +15,11 @@ from datetime import UTC, datetime
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 import app.models  # noqa: F401  # 确保所有 ORM 模型完成注册（create_all / Alembic 需要）
 from app.api.v1.router import api_router
+from app.core import metrics
 from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import get_logger, setup_logging
@@ -118,6 +119,19 @@ async def ready() -> JSONResponse:
             "redis": redis_ok,
         },
     )
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics_endpoint() -> Response:
+    """Prometheus 指标端点。
+
+    抓取时顺带探测数据库与 Redis 可用性，写入两个 Gauge——这样「依赖挂了」
+    可以直接在监控图上看到，而不是等业务报错才发现。
+    """
+    metrics.DB_UP.set(1 if await check_database() else 0)
+    metrics.REDIS_UP.set(1 if await redis_manager.ping() else 0)
+    body, content_type = metrics.render()
+    return Response(content=body, media_type=content_type)
 
 
 if __name__ == "__main__":  # pragma: no cover

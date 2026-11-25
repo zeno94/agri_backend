@@ -12,6 +12,7 @@ from uuid import uuid4
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.core import metrics
 from app.core.logging import get_logger, request_id_ctx
 
 logger = get_logger("app.access")
@@ -45,6 +46,16 @@ class RequestContextMiddleware:
             await self.app(scope, receive, send_wrapper)
         finally:
             elapsed_ms = (time.perf_counter() - started_at) * 1000
+            # 指标用路由模板做标签（/api/v1/parts/{part_id}），不用真实路径，
+            # 否则每个 ID 都会变成一条时间序列，把 Prometheus 撑爆。
+            route = scope.get("route")
+            route_path = getattr(route, "path", None) or "__unmatched__"
+            metrics.observe_request(
+                scope.get("method", "-"),
+                route_path,
+                status_code,
+                elapsed_ms / 1000,
+            )
             logger.info(
                 "%s %s -> %s (%.2f ms)",
                 scope.get("method", "-"),

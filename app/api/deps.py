@@ -9,6 +9,7 @@ from fastapi.security import OAuth2PasswordBearer
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import revocation
 from app.core.config import settings
 from app.core.exceptions import AppError
 from app.core.redis import get_redis
@@ -33,9 +34,13 @@ CacheClient = Annotated[Redis | None, Depends(get_redis)]
 
 async def get_current_user(
     db: DbSession,
+    cache: CacheClient,
     token: Annotated[str | None, Depends(oauth2_scheme)] = None,
 ) -> User:
     """解析 Bearer Token 并加载当前用户。
+
+    校验顺序：签名/过期 → 是否被吊销（jti 黑名单 + 用户级水位）→ 用户是否存在 → 是否停用。
+    吊销状态存在 Redis；Redis 不可用时放行（可用性优先），代价是故障期间吊销失效。
 
     注意：鉴权与业务接口共享同一个 AsyncSession（FastAPI 依赖缓存），
     service 层显式 commit/rollback 时会把这次鉴权读操作一并提交，语义上无副作用。
@@ -44,6 +49,9 @@ async def get_current_user(
         raise AppError("NOT_AUTHENTICATED", "请先登录", 401, headers=AUTH_HEADERS)
 
     payload = decode_access_token(token)
+    if await revocation.is_revoked(cache, payload):
+        raise AppError("TOKEN_REVOKED", "登录状态已失效，请重新登录", 401, headers=AUTH_HEADERS)
+
     try:
         user_id = int(payload["sub"])
     except (KeyError, TypeError, ValueError) as exc:
@@ -151,3 +159,5 @@ def require_module(code: str):
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
 CurrentBoss = Annotated[User, Depends(get_current_boss)]
+# 原始 Bearer Token 字符串，登出时用来取 jti 做单张吊销
+BearerToken = Annotated[str | None, Depends(oauth2_scheme)]

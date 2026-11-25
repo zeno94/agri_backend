@@ -12,7 +12,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request
 from fastapi.security import OAuth2PasswordRequestForm
 
-from app.api.deps import CurrentUser, DbSession
+from app.api.deps import BearerToken, CacheClient, CurrentUser, DbSession
+from app.core import revocation
+from app.core.exceptions import AppError
+from app.core.security import decode_access_token
 from app.schemas.auth import LoginRequest, TokenOut
 from app.schemas.common import Message
 from app.schemas.user import UserOut
@@ -69,10 +72,28 @@ async def login_json(payload: LoginRequest, request: Request, db: DbSession) -> 
 @router.post(
     "/logout",
     response_model=Message,
-    summary="退出登录（审计记录）",
-    description="记录退出审计；JWT 无状态，已签发 Token 在过期前仍然有效。",
+    summary="退出登录（吊销当前 Token）",
+    description=(
+        "把当前 Token 的 jti 写入 Redis 吊销名单，TTL 等于该 Token 的剩余寿命，到期自动清理。"
+        "吊销后同一 Token 再次请求会返回 401 TOKEN_REVOKED。"
+    ),
 )
-async def logout(request: Request, db: DbSession, current_user: CurrentUser) -> Message:
+async def logout(
+    request: Request,
+    db: DbSession,
+    current_user: CurrentUser,
+    cache: CacheClient,
+    token: BearerToken,
+) -> Message:
+    revoked = False
+    if token:
+        try:
+            payload = decode_access_token(token)
+        except AppError:
+            payload = None
+        if payload is not None:
+            revoked = await revocation.revoke_token(cache, payload)
+
     await audit_service.record(
         db,
         user=current_user,
@@ -80,10 +101,11 @@ async def logout(request: Request, db: DbSession, current_user: CurrentUser) -> 
         module="auth",
         method="POST",
         path=request.url.path,
+        detail={"token_revoked": revoked},
         request=request,
         commit=True,
     )
-    return Message(message="已退出登录")
+    return Message(message="已退出登录，当前凭证已失效" if revoked else "已退出登录")
 
 
 @router.get("/me", response_model=UserOut, summary="当前登录用户信息")

@@ -58,10 +58,14 @@ services:
     container_name: agri-erp-redis
     restart: unless-stopped
     logging: *default-logging
+    # 列表缓存丢了能自愈，但 JWT 吊销名单（jti 黑名单 / 改密水位）丢了就等于把已登出的
+    # 凭证重新放行，所以开 AOF（每秒刷盘）。数据量只有几十 KB，代价可以忽略。
     command:
       - redis-server
       - --appendonly
-      - "no"
+      - "yes"
+      - --appendfsync
+      - everysec
       - --maxmemory
       - 48mb
       - --maxmemory-policy

@@ -60,6 +60,13 @@ class Settings(BaseSettings):
     CACHE_TTL_SECONDS: int = Field(default=300, ge=1, le=86400)
     PARTS_CACHE_PREFIX: str = "erp:parts"
 
+    # ---------- 幂等与令牌吊销 ----------
+    # 幂等键：同一 Idempotency-Key 在 TTL 内只执行一次，重复请求回放首次结果
+    IDEMPOTENCY_PREFIX: str = "erp:idem"
+    IDEMPOTENCY_TTL_SECONDS: int = Field(default=86400, ge=60, le=60 * 60 * 24 * 7)
+    # JWT 吊销：jti 黑名单（登出）与用户级签发时间水位（改密/停用）
+    JWT_REVOCATION_PREFIX: str = "erp:jwt"
+
     # ---------- CORS ----------
     # "*" 表示允许所有来源；多个来源用英文逗号分隔，例如 "http://localhost:5173,http://127.0.0.1:5173"
     CORS_ORIGINS: str = "*"

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request, status
 
-from app.api.deps import CurrentBoss, DbSession
+from app.api.deps import CacheClient, CurrentBoss, DbSession
+from app.core import revocation
 from app.schemas.common import Message
 from app.schemas.user import (
     PasswordReset,
@@ -52,8 +53,14 @@ async def update_user(
     request: Request,
     db: DbSession,
     current_boss: CurrentBoss,
+    cache: CacheClient,
 ) -> UserOut:
     result = await user_service.update_user(db, user_id, payload)
+    # 停用账号的同时吊销该用户已签发的全部 Token，避免「停用了但凭证还能用」
+    changes = payload.model_dump(exclude_unset=True)
+    tokens_revoked = False
+    if changes.get("is_active") is False:
+        tokens_revoked = await revocation.revoke_user_tokens(cache, user_id)
     await audit_service.record(
         db,
         user=current_boss,
@@ -63,7 +70,7 @@ async def update_user(
         resource_id=user_id,
         method="PATCH",
         path=request.url.path,
-        detail=payload.model_dump(exclude_unset=True),
+        detail={**changes, "tokens_revoked": tokens_revoked},
         request=request,
     )
     return result
@@ -100,8 +107,11 @@ async def reset_password(
     request: Request,
     db: DbSession,
     current_boss: CurrentBoss,
+    cache: CacheClient,
 ) -> Message:
     await user_service.reset_password(db, user_id, payload.password)
+    # 改密后旧 Token 必须立刻失效，否则「改了密码但别人手上的凭证还能用」
+    tokens_revoked = await revocation.revoke_user_tokens(cache, user_id)
     await audit_service.record(
         db,
         user=current_boss,
@@ -111,7 +121,7 @@ async def reset_password(
         resource_id=user_id,
         method="POST",
         path=request.url.path,
-        detail={"username": f"user#{user_id}"},
+        detail={"username": f"user#{user_id}", "tokens_revoked": tokens_revoked},
         request=request,
     )
-    return Message(message="密码已重置")
+    return Message(message="密码已重置，该账号的历史登录凭证已失效")
